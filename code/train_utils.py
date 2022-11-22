@@ -7,7 +7,7 @@ from PIL import Image
 import torch
 from torch.utils.data import Dataset
 
-
+from torchvision import transforms
 
 
 
@@ -37,7 +37,8 @@ class CandidateDataset(Dataset):
             tuple: (sample, target) where target is class_index of the target class.
         """
         sample, target = self.samples[index], self.targets[index]
-        sample = Image.fromarray(np.moveaxis(sample, 0, -1))
+        # sample = Image.fromarray(np.moveaxis(sample, 0, -1))
+        sample = Image.fromarray(sample, mode="L")
         
         if self.transform is not None:
             sample = self.transform(sample)
@@ -49,11 +50,13 @@ class CandidateDataset(Dataset):
 def np_loader(filename, train=True):
     data = np.load(filename)
     if train:
-        samples = data['X_train'].transpose(0, 3, 1, 2)
-        targets = data['y_train']
+        # samples = data['x_train'].transpose(0, 3, 1, 2)
+        samples = data['x_train'].astype(torch.LongTensor)
+        targets = data['y_train'].astype(torch.LongTensor)
     else:
-        samples = data['X_test'].transpose(0, 3, 1, 2)
-        targets = data['y_test']
+        # samples = data['x_test'].transpose(0, 3, 1, 2)
+        samples = data['x_test'].astype(torch.LongTensor)
+        targets = data['y_test'].astype(torch.LongTensor)
     return samples, targets
 
 

@@ -9,7 +9,7 @@ def make_cnn(num_planes=64, num_classes=10):
     ''' Returns a 5-layer CNN with width parameter c. '''
     return nn.Sequential(
         # Layer 0
-        nn.Conv2d(3, num_planes, kernel_size=3, stride=1,
+        nn.Conv2d(1, num_planes, kernel_size=3, stride=1,
                   padding=1, bias=True),
         nn.BatchNorm2d(num_planes),
         nn.ReLU(),
@@ -29,7 +29,7 @@ def make_cnn(num_planes=64, num_classes=10):
         nn.MaxPool2d(2),
 
         # Layer 3
-        nn.Conv2d(num_planes*4, num_planes*8, kernel_size=3,
+        nn.Conv2d(num_planes*4, num_planes*8, kernel_size=1,
                   stride=1, padding=1, bias=True),
         nn.BatchNorm2d(num_planes*8),
         nn.ReLU(),

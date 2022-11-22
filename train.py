@@ -39,6 +39,8 @@ import torchvision.models as models
 
 import model_select
 
+from collections import Counter
+
 
 # %%
 cifar10_classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
@@ -65,6 +67,8 @@ def main_worker(gpu, ngpus_per_node, args):
         print("=> creating model '{}'".format(args.model))
         model = model_select.BaseModel.create(args.model, **args.model_config)
     
+    if args.gpu == 0:
+        args.gpu = None
     
     if args.gpu is not None:
         torch.cuda.set_device(args.gpu)
@@ -73,18 +77,21 @@ def main_worker(gpu, ngpus_per_node, args):
         # DataParallel will divide and allocate batch_size to all available GPUs
         if args.model.startswith('alexnet') or args.model.startswith('vgg'):
             model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
+            # model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            # model = torch.nn.DataParallel(model).cuda()
+            model = torch.nn.DataParallel(model)
 
     # define loss function (criterion) and optimizer
     if args.loss in ['cross', 'cross_entropy', 'entropy']:
-        criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+        # criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+        criterion = nn.CrossEntropyLoss()
     
     elif args.loss in ['l2', 'l2_squared', 'squared', 'MSE']:
         print('[INFO] Using MSE loss function instead of Cross Entropy.')
         args.loss = 'l2'
-        criterion = nn.MSELoss().cuda(args.gpu)
+        # criterion = nn.MSELoss().cuda(args.gpu)
+        criterion = nn.MSELoss()
 
     if args.opt.lower() == 'sgd':
         optimizer = torch.optim.SGD(model.parameters(), args.lr,
@@ -139,8 +146,7 @@ def main_worker(gpu, ngpus_per_node, args):
     test_file = args.root / args.test
     if args.sub:
         sub = args.root / args.sub
-    normalize = transforms.Normalize(mean=[0.4914, 0.4822, 0.4465],
-                                     std=[0.2023, 0.1994, 0.2010])
+    normalize = transforms.Normalize((0.5,), (0.2,))
 
     train_trans_list = []
     if not args.norandomcrop:
@@ -209,14 +215,19 @@ def main_worker(gpu, ngpus_per_node, args):
     
     # Inject symmetric noise to training set
     if args.inject_noise:
-        im_per_class = int(len(train_dataset) / args.num_classes)
+        num_imgs_dict = dict(Counter(train_dataset.targets))
+
+        # im_per_class = int(len(train_dataset) / args.num_classes)
         noisy_labels = np.zeros((len(train_dataset),), dtype=int)
-        num_shuffle = int(im_per_class * (args.inject_noise / (args.num_classes - 1)))
+        # num_shuffle = int(im_per_class * (args.inject_noise / (args.num_classes - 1)))
         for i in range(args.num_classes):
             noisy_idx = []
             cur_idx = [idx for idx, label in enumerate(train_dataset.targets) if label==i]
             shuffled_idx = random.sample(cur_idx, len(cur_idx))
+            im_per_class = num_imgs_dict[i]
             for r in range(args.num_classes):
+                im_per_new_class = num_imgs_dict[r]
+                num_shuffle = int(im_per_class * (args.inject_noise / (args.num_classes - 1)))
                 noisy_idx += [r for idx in shuffled_idx[im_per_class - (r+1)*num_shuffle:im_per_class - r*num_shuffle]]
             noisy_idx += [i for idx in shuffled_idx[:im_per_class - args.num_classes*num_shuffle]]
             noisy_labels[cur_idx] = np.array(noisy_idx)
@@ -240,20 +251,21 @@ def main_worker(gpu, ngpus_per_node, args):
             num_workers=args.workers, pin_memory=True)
 
     if args.evaluate:
-        save_config(args)
+        # save_config(args)
         validate(val_loader, model, criterion, args)
         return
     
     if args.compute_jacobian:
         assert not args.compute_jacobian_svd, "Jacobian prod and Jacobian SVD cannot be set at the same time."
-        gvec = (torch.randn((1, args.num_classes)) / len(train_dataset)).cuda(args.gpu, non_blocking=True)
+        # gvec = (torch.randn((1, args.num_classes)) / len(train_dataset)).cuda(args.gpu, non_blocking=True)
+        gvec = torch.randn((1, args.num_classes)) / len(train_dataset)
     
     if args.compute_jacobian_svd:
         sv, vconv, vfc = get_jacobian_svd(train_loader, model, args, average_batches=args.average_batches)
 
         svd_file = args.outpath / 'jacobian_svd.npz'
         np.savez(svd_file, sv=sv, vconv=vconv, vfc=vfc)
-        save_config(args)
+        # save_config(args)
         return
 
     # TODO: tracking weights of the model
@@ -318,7 +330,7 @@ def main_worker(gpu, ngpus_per_node, args):
         scale_initialization(model, [0,3,7,11], float(args.details.split()[-1]))
 
 
-    save_config(args)
+    # save_config(args)
     train_log = []
     log_file = args.outpath / 'log.json'
 
@@ -358,8 +370,10 @@ def main_worker(gpu, ngpus_per_node, args):
                 with open(cur_file, 'rb') as fn:
                     outputs_sum, outputs_sumnormsquared, test_loss_sum = pickle.load(fn)
             else:
-                outputs_sum = torch.Tensor(len(test_dataset), args.num_classes).zero_().cuda(args.gpu)
-                outputs_sumnormsquared = torch.Tensor(len(test_dataset)).zero_().cuda(args.gpu)
+                # outputs_sum = torch.Tensor(len(test_dataset), args.num_classes).zero_().cuda(args.gpu)
+                # outputs_sumnormsquared = torch.Tensor(len(test_dataset)).zero_().cuda(args.gpu)
+                outputs_sum = torch.Tensor(len(test_dataset), args.num_classes).zero_()
+                outputs_sumnormsquared = torch.Tensor(len(test_dataset)).zero_()
                 test_loss_sum = 0
             
             test_loss_sum += test_loss
@@ -416,7 +430,6 @@ def main_worker(gpu, ngpus_per_node, args):
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
-            
 
         save_checkpoint({
             'epoch': epoch + 1,
@@ -424,7 +437,15 @@ def main_worker(gpu, ngpus_per_node, args):
             'state_dict': model.state_dict(),
             'best_acc1': best_acc1,
             'optimizer' : optimizer.state_dict(),
-        }, is_best, outdir=(args.outpath if args.secure_checkpoint else None))
+        }, is_best)    
+
+        # save_checkpoint({
+        #     'epoch': epoch + 1,
+        #     'arch': args.model,
+        #     'state_dict': model.state_dict(),
+        #     'best_acc1': best_acc1,
+        #     'optimizer' : optimizer.state_dict(),
+        # }, is_best, filename=(args.outpath if args.secure_checkpoint else None))
 
 
 def compute_bias_variance(net, testloader, args, outputs_sum, outputs_sumnormsquared):
@@ -434,9 +455,10 @@ def compute_bias_variance(net, testloader, args, outputs_sum, outputs_sumnormsqu
     total = 0
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(testloader):
-            inputs = inputs.cuda(args.gpu, non_blocking=True)
-            targets = targets.cuda(args.gpu, non_blocking=True)
-            targets_onehot = torch.FloatTensor(targets.size(0), args.num_classes).cuda(args.gpu)
+            # inputs = inputs.cuda(args.gpu, non_blocking=True)
+            # targets = targets.cuda(args.gpu, non_blocking=True)
+            # targets_onehot = torch.FloatTensor(targets.size(0), args.num_classes).cuda(args.gpu)
+            targets_onehot = torch.FloatTensor(targets.size(0), args.num_classes)
             targets_onehot.zero_()
             targets_onehot.scatter_(1, targets.view(-1, 1).long(), 1)
             outputs = net(inputs)
@@ -479,15 +501,15 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
                 lr = base_lr / np.sqrt(1 + (epoch*len(train_loader) + i)/d_rate)
                 param_group['lr'] = lr
 
-        if args.gpu is not None:
-            input = input.cuda(args.gpu, non_blocking=True)
+        # if args.gpu is not None:
+            # input = input.cuda(args.gpu, non_blocking=True)
         
         if args.loss == 'l2':
             zero_mat = np.zeros((len(target), args.num_classes), dtype=int)
             zero_mat[list(range(len(target))), target] = 1
             targetl2 = torch.from_numpy(zero_mat).float()
-            targetl2 = targetl2.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
+            # targetl2 = targetl2.cuda(args.gpu, non_blocking=True)
+        # target = target.cuda(args.gpu, non_blocking=True)
         
         # for LBFGS
         if args.opt.lower() == 'lbfgs':
@@ -501,8 +523,10 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             optimizer.step(closure)
             
         else:
-            # compute output
             output = model(input)
+            target = target.numpy()
+            target = torch.from_numpy(target).long()
+
             if args.loss == 'l2':
                 loss = criterion(output, targetl2)
             else:
@@ -550,18 +574,21 @@ def validate(val_loader, model, criterion, args):
     with torch.no_grad():
         end = time.time()
         for i, (input, target) in enumerate(val_loader):
-            if args.gpu is not None:
-                input = input.cuda(args.gpu, non_blocking=True)
+            # if args.gpu is not None:
+            #     input = input.cuda(args.gpu, non_blocking=True)
             
             if args.loss == 'l2':
                 zero_mat = np.zeros((len(target), args.num_classes), dtype=int)
                 zero_mat[list(range(len(target))), target] = 1
                 targetl2 = torch.from_numpy(zero_mat).float()
-                targetl2 = targetl2.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+                # targetl2 = targetl2.cuda(args.gpu, non_blocking=True)
+            # target = target.cuda(args.gpu, non_blocking=True)
 
             # compute output
             output = model(input)
+            target = target.numpy()
+            target = torch.from_numpy(target).long()
+
             if args.loss == 'l2':
                 loss = criterion(output, targetl2)
             else:
@@ -619,7 +646,7 @@ def accuracy(output, target, topk=(1,), track=False):
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
@@ -638,9 +665,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='CLI parameters for training')
     parser.add_argument('--root', type=str, default='', metavar='DIR',
                         help='Root directory')
-    parser.add_argument('--main', type=str, default='cifar.npz', metavar='FILE',
+    parser.add_argument('--main', type=str, default='mnist.npz', metavar='FILE',
                         help='Main file')
-    parser.add_argument('--test', type=str, default='cifar.npz', metavar='FILE',
+    parser.add_argument('--test', type=str, default='mnist.npz', metavar='FILE',
                         help='Test file')
     parser.add_argument('--sub', type=str, default='',
                         help='Sub file')
